@@ -11,7 +11,6 @@ embed_model = HuggingFaceEmbeddings(
     encode_kwargs={'device': device, 'batch_size': 32}
 )
 
-
 docs = [
     "this is one document",
     "and another document"
@@ -58,7 +57,7 @@ data = load_dataset(
     split='train'
 )
 
-
+data = data.to_pandas()
 batch_size = 32
 
 for i in range(0, len(data), batch_size):
@@ -78,13 +77,7 @@ for i in range(0, len(data), batch_size):
 
 index.describe_index_stats()
 
-
-
-
-
-
-
-
+print("Finished adding stuff to pinecone database")
 from torch import cuda, bfloat16
 import transformers
 
@@ -163,3 +156,5 @@ rag_pipeline = RetrievalQA.from_chain_type(
     llm=llm, chain_type='stuff',
     retriever=vectorstore.as_retriever()
 )
+
+print(rag_pipeline("Give me some details about Stewart Annex"))
