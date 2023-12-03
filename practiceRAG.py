@@ -1,4 +1,7 @@
+import os
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:100'
 from torch import cuda
+import torch
 from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 import streamlit as st
 from qdrant_client import QdrantClient
@@ -8,16 +11,16 @@ print("device deviced, it's ", device)
 embed_model = HuggingFaceEmbeddings(
     model_name=embed_model_id,
     model_kwargs={'device': device},
-    encode_kwargs={'device': device, 'batch_size': 32}
+    encode_kwargs={'device': device, 'batch_size': 16}
 )
 
-
+print("After embeddings")
 client = QdrantClient(host="localhost", port=6333)
 from qdrant_client.http import models
 
 index_name = 'llama-2-military-bases'
 
-@st.cache
+@st.cache_data
 def create_collec():
     client.create_collection(
         collection_name=index_name,
@@ -33,10 +36,10 @@ dataset = load_dataset(
 )
 
 data = dataset.to_pandas()
-batch_size = 32
+batch_size = 16
 
 
-@st.cache
+@st.cache_data
 def addData():
     for i in range(0,len(data), batch_size):
         i_end = min(len(data), i+batch_size)
@@ -57,32 +60,29 @@ def addData():
         )
 addData()
 
-
-
-from torch import cuda, bfloat16
 import transformers
 
-model_id = 'meta-llama/Llama-2-13b-chat-hf'
-
-device = f'cuda:{cuda.current_device()}' if cuda.is_available() else 'cpu'
-if device == 'cpu':
-    print("ERROR, ERROR, USING CPU")
+model_id = 'meta-llama/Llama-2-7b-chat-hf'
 
 # begin initializing HF items, need auth token for these
 hf_auth = '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'
+torch.cuda.empty_cache()
+print("model configging ", torch.cuda.memory_allocated(device))
 model_config = transformers.AutoConfig.from_pretrained(
     model_id,
     use_auth_token=hf_auth
 )
-@st.cache
+@st.cache_resource
 def createModel():
-    return transformers.AutoModelForCausalLM.from_pretrained(
+    model = transformers.AutoModelForCausalLM.from_pretrained(
         model_id,
         trust_remote_code=True,
         config=model_config,
-        # quantization_config=bnb_config,
         use_auth_token=hf_auth
     )
+    model = model.to(device)
+    return model
+print("creating model")
 model = createModel()
 model.eval()
 
@@ -93,12 +93,12 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(
 
 generate_text = transformers.pipeline(
     model=model, tokenizer=tokenizer,
-    return_full_text=True,  # langchain expects the full text
+    return_full_text=True, 
     task='text-generation',
-    # we pass model parameters here too
-    temperature=0.1,  # 'randomness' of outputs, 0.0 is the min and 1.0 the max
-    max_new_tokens=256,  # mex number of tokens to generate in the output
-    repetition_penalty=1.1  # without this output begins repeating
+    device=0,
+    temperature=0.1,
+    max_new_tokens=128,
+    repetition_penalty=1.1
 )
 
 
@@ -115,12 +115,19 @@ def RAGresponse(prompt):
     )
     print(texxt)
     texxt = texxt[0].payload['text']
-    inp = f"You have been asked {prompt}. {texxt}. Please answer the question using this information."
+    inp = f"You have been asked \"{prompt}\". {texxt}. Please answer the prompt using this information."
     return llm(inp)
 
-
-user_input = st.text_input("Enter your question:")
+if 'last_input' not in st.session_state:
+    st.session_state['last_input'] = None
+    st.session_state['llm_response'] = None
+    st.session_state['rag_response'] = None
+user_input = st.text_input("Enter your prompt:")
 print(user_input)
-resp = (llm(str(user_input)))
-print(resp)
-st.write(resp)
+if user_input != st.session_state['last_input']:
+    st.session_state['last_input'] = user_input
+    st.session_state['llm_response'] = llm(user_input)
+    st.session_state['rag_response'] = RAGresponse(user_input)
+st.write(st.session_state['llm_response'])
+st.write("Now for the RAG model")
+st.write(st.session_state['rag_response'])
